@@ -1,288 +1,386 @@
 import sys
 import json
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QFormLayout, QLineEdit, QComboBox, QPushButton, \
-    QGroupBox, QLabel, QHBoxLayout
+from typing import List, Dict, Set
+
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QFormLayout, QLineEdit, QComboBox, QPushButton,
+    QGroupBox, QLabel, QHBoxLayout, QMessageBox, QScrollArea
+)
 from PyQt5.QtCore import Qt
 
 
+# ---------------------- 数据模型 ----------------------
 class ReservoirConfig:
-    def __init__(self, rivers, data_type="daily"):
-        self.rivers = rivers  # 包含河流系统的所有数据
-        self.data_type = data_type  # 逐日或逐小时数据
+    def __init__(self, rivers: List["RiverSystem"], data_type: str = "daily"):
+        self.rivers = rivers
+        self.data_type = data_type  # "daily" | "hourly"
 
-    def to_dict(self):
-        """将配置转换为字典"""
+    def to_dict(self) -> Dict:
         return {
-            "rivers": [river.to_dict() for river in self.rivers],
+            "rivers": [r.to_dict() for r in self.rivers],
             "data_type": self.data_type
         }
 
-    def save_to_json(self, file_path):
-        """将配置保存为 JSON 文件"""
-        config_dict = self.to_dict()
-        with open(file_path, 'w') as json_file:
-            json.dump(config_dict, json_file, indent=4, ensure_ascii=False)
-        print(f"配置文件已保存到 {file_path}")
+    def save_to_json(self, file_path: str):
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=4, ensure_ascii=False)
 
 
 class RiverSystem:
-    def __init__(self, river_name, is_main_stream=True, tributaries=None):
-        self.river_name = river_name  # 河流名称
-        self.reservoirs = []  # 这个字段会动态保存每条河流下的水库
-        self.is_main_stream = is_main_stream  # 是否为干流
-        self.tributaries = tributaries if tributaries else []  # 支流（如果有的话）
+    def __init__(self, river_name: str, is_main_stream: bool = True, reservoirs: List[str] = None):
+        self.river_name = river_name
+        self.is_main_stream = is_main_stream
+        self.reservoirs = reservoirs[:] if reservoirs else []
+        self.tributaries: List[Tributary] = []
 
-    def add_reservoir(self, reservoir_name):
-        """添加水库到河流"""
-        self.reservoirs.append(reservoir_name)
+    def add_reservoir(self, name: str):
+        if name and name not in self.reservoirs:
+            self.reservoirs.append(name)
 
-    def delete_reservoir(self, river_system, reservoir_name):
-        """删除指定水库"""
-        river_system.delete_reservoir(reservoir_name)
-        print(f"删除水库：{reservoir_name}")
+    def remove_reservoir(self, name: str):
+        if name in self.reservoirs:
+            self.reservoirs.remove(name)
 
-        # 遍历布局，查找水库控件
-        for i in reversed(range(self.main_layout.count())):
-            widget = self.main_layout.itemAt(i).widget()
-
-            # 检查布局项是否是水库控件
-            if widget and isinstance(widget, QHBoxLayout):
-                for j in range(widget.count()):
-                    sub_widget = widget.itemAt(j).widget()
-
-                    # 找到并移除水库控件
-                    if isinstance(sub_widget, QLabel) and sub_widget.text() == f"水库：{reservoir_name}":
-                        # 从布局中移除水库控件
-                        widget.removeWidget(sub_widget)
-
-                        # 解除控件和布局的绑定
-                        sub_widget.setParent(None)
-
-                        # 安全删除控件
-                        sub_widget.deleteLater()
-                        print(f"已删除界面上的水库：{reservoir_name}")
-                        break  # 确保删除后跳出循环
-
-    def delete(self):
-        """删除当前河流及所有水库"""
-        self.reservoirs.clear()
-
-    def to_dict(self):
-        """将河流系统转换为字典"""
+    def to_dict(self) -> Dict:
         return {
             "river_name": self.river_name,
-            "is_main_stream": self.is_main_stream,  # 判断是否是干流
-            "reserves": self.reservoirs,  # 保存所有水库
-            "tributaries": [tributary.to_dict() for tributary in self.tributaries]  # 支流信息
+            "is_main_stream": self.is_main_stream,
+            "reservoirs": self.reservoirs,
+            "tributaries": [t.to_dict() for t in self.tributaries]
         }
 
 
 class Tributary:
-    def __init__(self, tributary_name, insertion_river, insertion_point, location="上游"):
-        self.tributary_name = tributary_name  # 支流名称
-        self.insertion_river = insertion_river  # 支流插入的河流
-        self.insertion_point = insertion_point  # 支流插入的位置（如"水库2"）
-        self.location = location  # 插入位置是 "上游" 还是 "下游"
+    def __init__(self, tributary_name: str, insertion_river: str, insertion_point: str, location: str = "上游"):
+        self.tributary_name = tributary_name
+        self.insertion_river = insertion_river  # 目标河流（可为干流或支流）
+        self.insertion_point = insertion_point  # 如 “第 2 个水库” / “某水库名”
+        self.location = location                # "上游" | "下游"
 
-    def to_dict(self):
-        """将支流转换为字典"""
+    def to_dict(self) -> Dict:
         return {
             "tributary_name": self.tributary_name,
             "insertion_river": self.insertion_river,
             "insertion_point": self.insertion_point,
-            "location": self.location  # 上游或下游
+            "location": self.location
         }
 
 
+# ---------------------- UI 组件：单条河流组 ----------------------
+class RiverGroup(QGroupBox):
+    """
+    每条河流自己的控件组：名字、类型、（若为支流）插入目标/位置/上下游，水库增删。
+    """
+    def __init__(self, parent_window: "ConfigWindow", index: int):
+        super().__init__(f"河流：河流{index + 1}")
+        self.parent_window = parent_window
+
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("请输入河流名称")
+
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["干流", "支流"])
+
+        # 支流插入设置（目标可以是任何河流：干流或支流）
+        self.insert_group = QWidget()
+        insert_layout = QFormLayout(self.insert_group)
+        self.insert_target_combo = QComboBox()
+        self.insert_point_edit = QLineEdit()
+        self.insert_point_edit.setPlaceholderText("如：第 2 个水库 / 某水库名")
+        self.location_combo = QComboBox()
+        self.location_combo.addItems(["上游", "下游"])
+
+        insert_layout.addRow("插入目标河流：", self.insert_target_combo)
+        insert_layout.addRow("插入位置：", self.insert_point_edit)
+        insert_layout.addRow("位置关系：", self.location_combo)
+
+        # 水库列表（每个水库一行行容器）
+        self.res_list_container = QWidget()
+        self.res_list_layout = QVBoxLayout(self.res_list_container)
+        self.res_list_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 添加水库行
+        self.res_name_edit = QLineEdit()
+        self.res_name_edit.setPlaceholderText("输入水库名称")
+        self.res_add_btn = QPushButton("添加水库")
+        self.res_add_btn.clicked.connect(self.on_add_reservoir)
+
+        res_add_row = QWidget()
+        res_add_row_layout = QHBoxLayout(res_add_row)
+        res_add_row_layout.setContentsMargins(0, 0, 0, 0)
+        res_add_row_layout.addWidget(QLabel("水库名称："))
+        res_add_row_layout.addWidget(self.res_name_edit)
+        res_add_row_layout.addWidget(self.res_add_btn)
+
+        # 删除本河流
+        self.delete_btn = QPushButton("删除本河流")
+        self.delete_btn.clicked.connect(self.on_delete_me)
+
+        # 总体布局
+        lay = QVBoxLayout(self)
+        form = QFormLayout()
+        form.addRow("河流名称：", self.name_edit)
+        form.addRow("河流类型：", self.type_combo)
+        lay.addLayout(form)
+        lay.addWidget(self.insert_group)
+        lay.addWidget(QLabel("水库列表："))
+        lay.addWidget(self.res_list_container)
+        lay.addWidget(res_add_row)
+        lay.addWidget(self.delete_btn, alignment=Qt.AlignRight)
+
+        # 事件
+        self.type_combo.currentIndexChanged.connect(self._on_type_changed)
+        self.name_edit.textChanged.connect(lambda _: self.parent_window.on_river_type_or_name_changed())
+        self._on_type_changed()  # 初始化隐藏/显示
+        self.refresh_insert_targets()
+
+    # 由父窗口调用：当任意河流的类型或名字变化时刷新支流的“插入目标河流”下拉
+    def refresh_insert_targets(self):
+        is_tributary = (self.type_combo.currentText() == "支流")
+        self.insert_target_combo.clear()
+        if is_tributary:
+            current_name = self.get_river_name()
+            all_rivers = self.parent_window.get_current_river_names(exclude=current_name)
+            if not all_rivers:
+                self.insert_target_combo.addItem("（暂无可选目标）")
+                self.insert_target_combo.setEnabled(False)
+            else:
+                self.insert_target_combo.addItems(all_rivers)
+                self.insert_target_combo.setEnabled(True)
+
+    def _on_type_changed(self):
+        is_tributary = (self.type_combo.currentText() == "支流")
+        self.insert_group.setVisible(is_tributary)
+        self.refresh_insert_targets()
+        self.parent_window.on_river_type_or_name_changed()
+
+    def on_add_reservoir(self):
+        name = self.res_name_edit.text().strip()
+        if not name:
+            return
+        # 检查重复
+        if any(self._row_label_text(row) == name for row in self._iter_reservoir_rows()):
+            QMessageBox.warning(self, "提示", f"已存在名为“{name}”的水库。")
+            return
+        row = self._make_reservoir_row(name)
+        self.res_list_layout.addWidget(row)
+        self.res_name_edit.clear()
+
+    def _make_reservoir_row(self, name: str) -> QWidget:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        lbl = QLabel(name)
+        btn = QPushButton("删除")
+        btn.clicked.connect(lambda: self._remove_reservoir_row(row))
+        layout.addWidget(QLabel("水库："))
+        layout.addWidget(lbl)
+        layout.addStretch(1)
+        layout.addWidget(btn)
+        return row
+
+    def _remove_reservoir_row(self, row_widget: QWidget):
+        self.res_list_layout.removeWidget(row_widget)
+        row_widget.setParent(None)
+        row_widget.deleteLater()
+
+    def _iter_reservoir_rows(self):
+        for i in range(self.res_list_layout.count()):
+            w = self.res_list_layout.itemAt(i).widget()
+            if isinstance(w, QWidget):
+                yield w
+
+    @staticmethod
+    def _row_label_text(row_widget: QWidget) -> str:
+        labels = row_widget.findChildren(QLabel)
+        for lab in labels:
+            if lab.text() and lab.text() != "水库：":
+                return lab.text().strip()
+        return ""
+
+    # -------- 持久化读取 --------
+    def get_river_name(self) -> str:
+        return self.name_edit.text().strip() or self.title().replace("河流：", "").strip()
+
+    def is_main_stream(self) -> bool:
+        return self.type_combo.currentText() == "干流"
+
+    def get_reservoir_names(self) -> List[str]:
+        return [self._row_label_text(w) for w in self._iter_reservoir_rows() if self._row_label_text(w)]
+
+    def get_tributary_link(self) -> Tributary:
+        """仅当自身是支流时，返回挂接信息；否则返回 None"""
+        if self.is_main_stream():
+            return None
+        trib_name = self.get_river_name()
+        target = self.insert_target_combo.currentText().strip()
+        point = self.insert_point_edit.text().strip() or "未指定"
+        loc = self.location_combo.currentText()
+        return Tributary(trib_name, target, point, loc)
+
+    def on_delete_me(self):
+        self.parent_window.delete_river_group(self)
+
+
+# ---------------------- 主窗口 ----------------------
 class ConfigWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('水库调度项目配置')
-        self.setGeometry(100, 100, 600, 600)
+        self.setWindowTitle("水库调度项目配置")
+        self.resize(820, 680)
 
-        # 初始化界面
-        self.init_ui()
+        self.river_groups: List[RiverGroup] = []
 
-    def init_ui(self):
-        layout = QVBoxLayout()
+        root = QVBoxLayout(self)
 
-        # 配置表单
-        form_layout = QFormLayout()
+        # 顶部表单：数据类型 + 操作按钮
+        top_form = QFormLayout()
+        self.data_type_combo = QComboBox()
+        self.data_type_combo.addItems(["逐日", "逐小时"])  # 将映射为 daily/hourly
+        top_form.addRow("数据类型：", self.data_type_combo)
 
-        # 数据类型：逐日或逐小时
-        self.data_type_input = QComboBox()
-        self.data_type_input.addItems(['逐日', '逐小时'])
-        form_layout.addRow('数据类型：', self.data_type_input)
+        self.btn_add_river = QPushButton("添加河流")
+        self.btn_add_river.clicked.connect(self.add_river_group)
 
-        # 添加河流按钮
-        self.add_river_btn = QPushButton('添加河流')
-        self.add_river_btn.clicked.connect(self.add_river)
-        form_layout.addRow(self.add_river_btn)
+        self.btn_save = QPushButton("保存配置")
+        self.btn_save.clicked.connect(self.on_save)
 
-        # 保存配置文件按钮
-        self.save_config_btn = QPushButton('保存配置')
-        self.save_config_btn.clicked.connect(self.save_config)
-        layout.addWidget(self.save_config_btn)
+        top_btn_row = QWidget()
+        top_btn_lay = QHBoxLayout(top_btn_row)
+        top_btn_lay.setContentsMargins(0, 0, 0, 0)
+        top_btn_lay.addWidget(self.btn_add_river)
+        top_btn_lay.addStretch(1)
+        top_btn_lay.addWidget(self.btn_save)
 
-        # 主要布局
-        self.main_layout = QVBoxLayout()
+        root.addLayout(top_form)
+        root.addWidget(top_btn_row)
 
-        layout.addLayout(form_layout)
-        layout.addLayout(self.main_layout)
+        # 中间滚动区放多个河流组
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll_content = QWidget()
+        self.scroll_lay = QVBoxLayout(self.scroll_content)
+        self.scroll_lay.addStretch(1)
+        self.scroll.setWidget(self.scroll_content)
+        root.addWidget(self.scroll)
 
-        self.setLayout(layout)
+    # --------- 供子组回调：类型/名字变化时刷新所有“插入目标河流” ----------
+    def on_river_type_or_name_changed(self):
+        for grp in self.river_groups:
+            grp.refresh_insert_targets()
 
-        self.rivers = []  # 用于保存所有的河流系统
+    def get_current_river_names(self, exclude: str = "") -> List[str]:
+        names = []
+        for grp in self.river_groups:
+            nm = grp.get_river_name()
+            if nm and nm != exclude:
+                names.append(nm)
+        # 可选：去重（避免用户误重名）
+        uniq = []
+        for n in names:
+            if n not in uniq:
+                uniq.append(n)
+        return uniq
 
-    def add_river(self):
-        """添加新河流"""
-        # 根据已添加河流的数量，动态生成河流名称
-        river_name = f"河流{len(self.rivers) + 1}"
+    # --------- 添加/删除 河流组 ----------
+    def add_river_group(self):
+        idx = len(self.river_groups)
+        grp = RiverGroup(self, idx)
+        self.scroll_lay.insertWidget(self.scroll_lay.count() - 1, grp)
+        self.river_groups.append(grp)
+        self.on_river_type_or_name_changed()
 
-        river_group = QGroupBox(f"河流：{river_name}")
-        river_layout = QVBoxLayout()
+    def delete_river_group(self, grp: RiverGroup):
+        if grp in self.river_groups:
+            self.river_groups.remove(grp)
+            grp.setParent(None)
+            grp.deleteLater()
+            self.on_river_type_or_name_changed()
 
-        # 输入河流名称
-        self.river_name_input = QLineEdit()
-        self.river_name_input.setPlaceholderText("请输入河流名称")
-        river_layout.addWidget(QLabel('河流名称：'))
-        river_layout.addWidget(self.river_name_input)
+    # --------- 拓扑环检测（支流→目标的有向边） ----------
+    @staticmethod
+    def _has_cycle(edges: List[tuple]) -> bool:
+        graph: Dict[str, List[str]] = {}
+        for a, b in edges:  # a -> b
+            graph.setdefault(a, []).append(b)
+            graph.setdefault(b, [])
+        WHITE, GRAY, BLACK = 0, 1, 2
+        color: Dict[str, int] = {node: WHITE for node in graph}
 
-        # 选择河流类型（干流或支流）
-        self.river_type_input = QComboBox()
-        self.river_type_input.addItems(['干流', '支流'])
-        river_layout.addWidget(QLabel('河流类型：'))
-        river_layout.addWidget(self.river_type_input)
+        def dfs(u: str) -> bool:
+            color[u] = GRAY
+            for v in graph[u]:
+                if color[v] == GRAY:
+                    return True
+                if color[v] == WHITE and dfs(v):
+                    return True
+            color[u] = BLACK
+            return False
 
-        # 如果是支流，选择插入的干流和插入位置
-        self.tributary_insertion_river_input = QComboBox()
-        self.tributary_insertion_river_input.addItem('干流1')  # 初始干流1，后面可根据实际动态生成
-        self.tributary_insertion_river_input.setEnabled(False)
-        self.tributary_insertion_input = QLineEdit()
-        self.tributary_insertion_input.setPlaceholderText("如：第 2 个水库")
-        self.tributary_insertion_input.setEnabled(False)
+        for node in list(graph.keys()):
+            if color[node] == WHITE and dfs(node):
+                return True
+        return False
 
-        self.river_type_input.currentIndexChanged.connect(self.toggle_tributary_options)
-
-        river_layout.addWidget(QLabel('插入干流：'))
-        river_layout.addWidget(self.tributary_insertion_river_input)
-        river_layout.addWidget(QLabel('插入位置：'))
-        river_layout.addWidget(self.tributary_insertion_input)
-
-        # 添加按钮：添加水库到河流
-        self.add_reservoir_btn = QPushButton('添加水库')
-        self.add_reservoir_btn.clicked.connect(self.add_reservoir)
-        river_layout.addWidget(self.add_reservoir_btn)
-
-        # 删除河流按钮
-        self.delete_river_btn = QPushButton('删除河流')
-        self.delete_river_btn.clicked.connect(self.delete_river)
-        river_layout.addWidget(self.delete_river_btn)
-
-        river_group.setLayout(river_layout)
-        self.main_layout.addWidget(river_group)
-
-        # 创建一个新的河流系统
-        new_river = RiverSystem(river_name, is_main_stream=True)
-        self.rivers.append(new_river)
-
-    def toggle_tributary_options(self):
-        """切换支流的插入选项"""
-        if self.river_type_input.currentText() == '支流':
-            self.tributary_insertion_river_input.setEnabled(True)
-            self.tributary_insertion_input.setEnabled(True)
-        else:
-            self.tributary_insertion_river_input.setEnabled(False)
-            self.tributary_insertion_input.setEnabled(False)
-
-    def add_reservoir(self):
-        """为当前河流添加水库"""
-        current_river = self.rivers[-1]  # 当前操作的是最新添加的河流
-        # 添加一个输入框让用户命名水库
-        reservoir_name_input = QLineEdit()
-        reservoir_name_input.setPlaceholderText("请输入水库名称")
-
-        # 添加水库名称输入框
-        confirm_button = QPushButton("确认添加水库")
-        confirm_button.clicked.connect(lambda: self.confirm_add_reservoir(current_river, reservoir_name_input.text()))
-
-        # 将输入框和按钮添加到布局中
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("水库名称："))
-        layout.addWidget(reservoir_name_input)
-        layout.addWidget(confirm_button)
-
-        # 创建一个小组框用于水库输入
-        group_box = QGroupBox("输入水库名称")
-        group_box.setLayout(layout)
-
-        self.main_layout.addWidget(group_box)
-
-    def confirm_add_reservoir(self, current_river, reservoir_name):
-        """确认添加水库"""
-        if reservoir_name:  # 如果用户输入了水库名称
-            current_river.add_reservoir(reservoir_name)
-            print(f"添加水库：{reservoir_name}")
-            # 更新界面显示水库
-            new_reservoir_label = QLabel(f"水库：{reservoir_name}")
-            delete_button = QPushButton("删除水库")
-            delete_button.clicked.connect(lambda: self.delete_reservoir(current_river, reservoir_name))
-
-            delete_layout = QHBoxLayout()
-            delete_layout.addWidget(new_reservoir_label)
-            delete_layout.addWidget(delete_button)
-
-            self.main_layout.addLayout(delete_layout)
-
-    def delete_reservoir(self, river_system, reservoir_name):
-        """删除指定水库"""
-        river_system.delete_reservoir(reservoir_name)
-        print(f"删除水库：{reservoir_name}")
-
-        # 更新界面，移除水库相关的显示组件
-        for i in reversed(range(self.main_layout.count())):
-            widget = self.main_layout.itemAt(i).widget()
-            if widget and isinstance(widget, QHBoxLayout):
-                for j in range(widget.count()):
-                    sub_widget = widget.itemAt(j).widget()
-                    if isinstance(sub_widget, QLabel) and sub_widget.text() == f"水库：{reservoir_name}":
-                        widget.deleteLater()
-
-    def delete_river(self):
-        """删除当前河流"""
-        current_river = self.rivers[-1]  # 当前操作的是最新添加的河流
-        self.rivers.remove(current_river)  # 从列表中删除河流
-        print(f"删除河流：{current_river.river_name}")
-
-        # 删除界面中对应的河流控件
-        for i in reversed(range(self.main_layout.count())):
-            widget = self.main_layout.itemAt(i).widget()
-            if widget and isinstance(widget, QGroupBox) and widget.title() == f"河流：{current_river.river_name}":
-                widget.deleteLater()
-
-    def save_config(self):
-        """保存配置到 JSON 文件"""
+    # --------- 保存 ----------
+    def on_save(self):
         try:
-            # 获取数据类型（逐日或逐小时）
-            data_type = self.data_type_input.currentText()
+            # 映射数据类型
+            dt_text = self.data_type_combo.currentText()
+            data_type = "daily" if dt_text == "逐日" else "hourly"
 
-            # 例如：这里假设有一个河流，并添加了水库
-            river_system = self.rivers[0]
-            if self.river_type_input.currentText() == '支流':
-                tributary = Tributary("支流1", "干流1", "第 2 个水库")
-                river_system.tributaries.append(tributary)
+            # 组装所有河流
+            name_to_system: Dict[str, RiverSystem] = {}
+            tributary_links: List[Tributary] = []
 
-            # 创建配置并保存
-            config = ReservoirConfig(self.rivers, data_type)
-            config.save_to_json('project_config.json')  # 保存为 JSON 文件
+            for grp in self.river_groups:
+                name = grp.get_river_name()
+                if not name:
+                    continue
+                sys_obj = RiverSystem(
+                    river_name=name,
+                    is_main_stream=grp.is_main_stream(),
+                    reservoirs=grp.get_reservoir_names()
+                )
+                if name in name_to_system:
+                    QMessageBox.warning(self, "提示", f"存在重名河流：{name}，请修改后重试。")
+                    return
+                name_to_system[name] = sys_obj
+                link = grp.get_tributary_link()
+                if link:
+                    tributary_links.append(link)
 
-            print("配置保存成功！")
+            # 校验：插入目标必须存在
+            for link in tributary_links:
+                if link.insertion_river not in name_to_system:
+                    QMessageBox.warning(self, "提示", f"支流“{link.tributary_name}”的插入目标“{link.insertion_river}”不存在。")
+                    return
+
+            # 环检测：a(支流) -> b(目标河流)
+            edges = [(t.tributary_name, t.insertion_river) for t in tributary_links]
+            if self._has_cycle(edges):
+                QMessageBox.critical(self, "错误", "检测到拓扑环（支流挂接产生循环）。请检查支流与目标河流的关系。")
+                return
+
+            # 将支流挂到对应目标（目标可为干流或支流）
+            for link in tributary_links:
+                name_to_system[link.insertion_river].tributaries.append(link)
+
+            # 生成最终列表（保持界面顺序）
+            rivers_final = [name_to_system[grp.get_river_name()]
+                            for grp in self.river_groups
+                            if grp.get_river_name() in name_to_system]
+
+            config = ReservoirConfig(rivers=rivers_final, data_type=data_type)
+            config.save_to_json("project_config.json")
+
+            QMessageBox.information(self, "成功", "配置已保存到 project_config.json")
         except Exception as e:
-            print(f"保存配置时出错：{e}")
+            QMessageBox.critical(self, "错误", f"保存配置时出错：{e}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = ConfigWindow()
-    window.show()
+    win = ConfigWindow()
+    win.show()
     sys.exit(app.exec_())
