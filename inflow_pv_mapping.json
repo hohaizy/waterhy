@@ -1,0 +1,97 @@
+{
+    "data_type": "daily",
+    "reservoir_inflow_sources": [
+        {
+            "time_scale": "daily",
+            "river_name": "澜沧江",
+            "reservoir_name": "班达",
+            "file_path": "E:/code/逐日数据.xlsx",
+            "sheet_name": "原表+区间汇流",
+            "column_letter": "C",
+            "column_index": 3,
+            "start_row": 2,
+            "start_date": "1953-06-01",
+            "end_date": "2018-05-15",
+            "record_count": 23725
+        },
+        {
+            "time_scale": "daily",
+            "river_name": "澜沧江",
+            "reservoir_name": "如美",
+            "file_path": "E:/code/逐日数据.xlsx",
+            "sheet_name": "原表+区间汇流",
+            "column_letter": "E",
+            "column_index": 5,
+            "start_row": 2,
+            "start_date": "1953-06-01",
+            "end_date": "2018-05-15",
+            "record_count": 23725
+        },
+        {
+            "time_scale": "daily",
+            "river_name": "澜沧江",
+            "reservoir_name": "邦多",
+            "file_path": "E:/code/逐日数据.xlsx",
+            "sheet_name": "原表+区间汇流",
+            "column_letter": "G",
+            "column_index": 7,
+            "start_row": 2,
+            "start_date": "1953-06-01",
+            "end_date": "2018-05-15",
+            "record_count": 23725
+        },
+        {
+            "time_scale": "daily",
+            "river_name": "澜沧江",
+            "reservoir_name": "古学",
+            "file_path": "E:/code/逐日数据.xlsx",
+            "sheet_name": "原表+区间汇流",
+            "column_letter": "I",
+            "column_index": 9,
+            "start_row": 2,
+            "start_date": "1953-06-01",
+            "end_date": "2018-05-15",
+            "record_count": 23725
+        },
+        {
+            "time_scale": "daily",
+            "river_name": "澜沧江",
+            "reservoir_name": "曲孜卡",
+            "file_path": "E:/code/逐日数据.xlsx",
+            "sheet_name": "原表+区间汇流",
+            "column_letter": "K",
+            "column_index": 11,
+            "start_row": 2,
+            "start_date": "1953-06-01",
+            "end_date": "2018-05-15",
+            "record_count": 23725
+        },
+        {
+            "time_scale": "daily",
+            "river_name": "澜沧江",
+            "reservoir_name": "古水",
+            "file_path": "E:/code/逐日数据.xlsx",
+            "sheet_name": "原表+区间汇流",
+            "column_letter": "M",
+            "column_index": 13,
+            "start_row": 2,
+            "start_date": "1953-06-01",
+            "end_date": "2018-05-15",
+            "record_count": 23725
+        }
+    ],
+    "pv_sources": [
+        {
+            "time_scale": "hourly",
+            "pv_name": "PV1",
+            "file_path": "E:/code/pv_power.xlsx",
+            "sheet_name": "Sheet1",
+            "column_letter": "E",
+            "column_index": 5,
+            "start_row": 2,
+            "start_datetime": "2001-01-01 00:00:00",
+            "end_datetime": "2024-12-31 23:00:00",
+            "record_count": 210384
+        }
+    ]
+}
